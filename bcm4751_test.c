@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
 	usleep(250000);
 
 	printf("Opening /dev/s3c2410_serial1\n");
-	serial_fd = open("/dev/s3c2410_serial1", O_RDWR|O_NOCTTY|O_NONBLOCK);
+	serial_fd = open("/dev/s3c2410_serial1", O_RDWR|O_NOCTTY);
 
 	if(serial_fd < 0) {
 		printf("Serial fd is wrong, aborting\n");
@@ -174,37 +174,23 @@ int main(int argc, char *argv[])
     timeout.tv_usec = 0;
 
 	printf("Writing init bits\n");
-    rc = select(serial_fd + 1, NULL,  &fds, NULL, &timeout);
-    if(rc > 0) {
-	    write(serial_fd, init_val, 20);
-	    printf("Written\n");
-    } else {
-        printf("Timeout!\n");
-        return 0;
-    }
+	write(serial_fd, init_val, 20);
+	printf("Written\n");
 
 	for(i=0 ; i < 3 ; i++) {
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 0;
 
-		rc = select(serial_fd + 1, &fds, NULL, NULL, &timeout);
+		rc = read(serial_fd, data, 512);
+		printf("read %d bytes!\n", rc);
 
-		printf("select rc is %d\n", rc);
-
-		if(rc > 0) {
-			rc = read(serial_fd, data, 512);
-			printf("read %d bytes!\n", rc);
-
-			if(rc < 0) {
-				wake_unlock("gpsd-interface", 14);
-				gpio_write_ascii(gpio_standby_path, "0\n");
-				return 0;
-			}
-
-			hex_dump(data, rc);
-			break;
+		if(rc < 0) {
+			wake_unlock("gpsd-interface", 14);
+			gpio_write_ascii(gpio_standby_path, "0\n");
+			return 0;
 		}
-
+		hex_dump(data, rc);
+		break;
 		write(serial_fd, init_val, 20);
 	}
 
@@ -242,17 +228,10 @@ int main(int argc, char *argv[])
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 499000;
 
-		rc = select(serial_fd + 1, &fds, NULL, NULL, &timeout);
+		rc = read(serial_fd, data, 512);
+		printf("read %d bytes!\n");
+		hex_dump(data, rc);
 
-		printf("select rc is %d\n", rc);
-
-		if(rc > 0) {
-			rc = read(serial_fd, data, 512);
-			printf("read %d bytes!\n");
-			hex_dump(data, rc);
-
-		//	usleep(30000);
-		}
 	}
 
 	free(data);
