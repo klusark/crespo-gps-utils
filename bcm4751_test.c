@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <unistd.h>
-#include <termios.h>
+#include <termio.h>
 #include <errno.h> 
 
 #include <sys/types.h>
