@@ -189,8 +189,8 @@ int main(int argc, char *argv[])
     timeout.tv_usec = 0;
 
 	printf("Writing init bits\n");
-	write(serial_fd, init_val, 20);
-	printf("Written\n");
+	rc = write(serial_fd, init_val, 20);
+	printf("Written %d bytes!\n",rc);
 
 	for(i=0 ; i < 3 ; i++) {
 		timeout.tv_sec = 1;
