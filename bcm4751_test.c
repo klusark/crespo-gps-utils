@@ -1,30 +1,18 @@
-/*
- *   Copyright (C) 2012 Paul Kocialkowski <contact@paulk.fr>
- *
- *   This program is free software: you can redistribute it and/or modify
- *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation, either version 3 of the License, or
- *   (at your option) any later version.
- *
- *   This program is distributed in the hope that it will be useful,
- *   but WITHOUT ANY WARRANTY; without even the implied warranty of
- *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *   GNU General Public License for more details.
- *
- *   You should have received a copy of the GNU General Public License
- *   along with this program.  If not, see <http://www.gnu.org/licenses/>.
- */
+// Copyright (C) 2012 Paul Kocialkowski, contact@paulk.fr, GNU GPLv3+
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <unistd.h>
-#include <termio.h>
+#include <termios.h>
 #include <errno.h> 
 
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+
+#include <sys/syscall.h>
+#include <sys/linux-syscalls.h>
 
 void hex_dump(void *data, int size)
 {
@@ -145,6 +133,8 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	sleep(1);
+
 	printf("Wake lock on gpsd-interface\n");
 
 	wake_lock("gpsd-interface", 14);
@@ -155,7 +145,7 @@ int main(int argc, char *argv[])
 	usleep(250000);
 
 	printf("Opening /dev/s3c2410_serial1\n");
-	serial_fd = open("/dev/s3c2410_serial1", O_RDWR|O_NOCTTY);
+	serial_fd = open("/dev/s3c2410_serial1", O_RDWR|O_NOCTTY|O_NONBLOCK);
 
 	if(serial_fd < 0) {
 		printf("Serial fd is wrong, aborting\n");
@@ -163,21 +153,20 @@ int main(int argc, char *argv[])
 	}
 
 	tcgetattr(serial_fd, &termios);
-//	ioctl(serial_fd, TIOCMGET, &serial);
-    ioctl(serial_fd, TCFLSH, 0x2);
+	ioctl(serial_fd, TCFLSH, 0x2);
 
 	cfmakeraw(&termios);
 	cfsetispeed(&termios, B115200);
 	cfsetospeed(&termios, B115200);
 
-    tcsetattr(serial_fd, TCSANOW, &termios);
-//	ioctl(serial_fd, TIOCMSET, &serial);
-    ioctl(serial_fd, TCFLSH, 0x2);
+	// This is the magic to contact the chip
+	termios.c_cflag = 0x800018b2;
+//	termios.c_cc[5]=0x01;
+//	termios.c_cc[6]=0x00;
 
-	//ioctl(serial_fd, TIOCMGET, &serial);
+	tcsetattr(serial_fd, TCSANOW, &termios);
+	ioctl(serial_fd, TCFLSH, 0x2);
 	tcgetattr(serial_fd, &termios);
-
-//	usleep(250000);
 
 	FD_ZERO(&fds);
 	FD_SET(serial_fd, &fds);
@@ -185,47 +174,61 @@ int main(int argc, char *argv[])
 	memset(init_val, 0x80, 21);
 	data = malloc(512);
 
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
+	timeout.tv_sec = 1;
+	timeout.tv_usec = 0;
 
 	printf("Writing init bits\n");
-	rc = write(serial_fd, init_val, 20);
-	printf("Written %d bytes!\n",rc);
+
+	rc = select(serial_fd + 1, NULL,  &fds, NULL, &timeout);
+	if(rc > 0) {
+		write(serial_fd, init_val, 20);
+		printf("Written\n");
+	} else {
+		printf("Timeout!\n");
+		return 0;
+	}
 
 	for(i=0 ; i < 3 ; i++) {
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 0;
 
-		rc = read(serial_fd, data, 512);
-		printf("read %d bytes!\n", rc);
+		rc = select(serial_fd + 1, &fds, NULL, NULL, &timeout);
 
-		if(rc < 0) {
-			wake_unlock("gpsd-interface", 14);
-			gpio_write_ascii(gpio_standby_path, "0\n");
-			return 0;
-		}
-		hex_dump(data, rc);
-		break;
-		write(serial_fd, init_val, 20);
-	}
+		printf("select rc is %d\n", rc);
 
-	for(i=0 ; i < 3 ; i++) {
+		if(rc > 0) {
 			rc = read(serial_fd, data, 512);
 			printf("read %d bytes!\n", rc);
 
 			if(rc < 0) {
-				perror("Here comes the error");
+				wake_unlock("gpsd-interface", 14);
+				gpio_write_ascii(gpio_standby_path, "0\n");
+				return 0;
+			}
 
-			} else
-    			hex_dump(data, rc);
+			hex_dump(data, rc);
+			break;
+		}
 
-    	usleep(250000);
-    }
+		write(serial_fd, init_val, 20);
+	}
+
+	for(i=0 ; i < 3 ; i++) {
+		rc = read(serial_fd, data, 512);
+		printf("read %d bytes!\n", rc);
+
+		if(rc < 0) {
+			perror("Here comes the error");
+		} else
+		hex_dump(data, rc);
+
+		usleep(250000);
+	}
 
 	wake_unlock("gpsd-interface", 14);
 	gpio_write_ascii(gpio_standby_path, "0\n");
 
-    return 0;
+	return 0;
 
 	printf("Writing MEIF init bits\n");
 
@@ -243,10 +246,17 @@ int main(int argc, char *argv[])
 		timeout.tv_sec = 1;
 		timeout.tv_usec = 499000;
 
-		rc = read(serial_fd, data, 512);
-		printf("read %d bytes!\n");
-		hex_dump(data, rc);
+		rc = select(serial_fd + 1, &fds, NULL, NULL, &timeout);
 
+		printf("select rc is %d\n", rc);
+
+		if(rc > 0) {
+			rc = read(serial_fd, data, 512);
+			printf("read %d bytes!\n");
+			hex_dump(data, rc);
+
+		//	usleep(30000);
+		}
 	}
 
 	free(data);
