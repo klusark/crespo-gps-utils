@@ -24,8 +24,8 @@
 #ifndef _MEIF_H_
 #define _MEIF_H_
 
-#define MEIF_START	0xA593
-#define MEIF_END	0xA568
+#define MEIF_START	0xA5 + (0x93 << 8)
+#define MEIF_END	0xA5 + (0x68 << 8)
 
 /*
  * Commands
@@ -44,6 +44,12 @@
 /*
  * Structures
  */
+
+struct meif_header {
+	uint16_t marker;
+	uint16_t command;
+	uint16_t length;
+} __attribute__((__packed__));
 
 struct meif_message {
 	uint16_t command;

@@ -58,7 +58,7 @@ include $(BUILD_EXECUTABLE)
 
 include $(CLEAR_VARS)
 
-LOCAL_SRC_FILES := bcm4751_gpsd.c
+LOCAL_SRC_FILES := bcm4751_gpsd.c meif.c
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)
 

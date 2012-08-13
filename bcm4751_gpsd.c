@@ -288,7 +288,7 @@ int main(void)
 		return 1;
 	}
 
-	bcm4751_read_dump(fd);
+	meif_read_loop(fd);
 
 	return 0;
 }
