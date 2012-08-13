@@ -30,6 +30,84 @@
 
 #include "meif.h"
 
+struct meif_message *meif_message_from_data(void *data, int length)
+{
+	struct meif_message *meif_message = NULL;
+	struct meif_header *meif_header = NULL;
+	void *message_data = NULL;
+	int message_data_length = 0;
+	uint16_t marker = 0;
+
+	if(data == NULL || length < sizeof(struct meif_header))
+		return NULL;
+
+	meif_header = (struct meif_header *) data;
+
+	marker = meif_header->marker;
+	if(marker != MEIF_START)
+		return NULL;
+
+	marker = *((uint16_t *) ((uint8_t *) data + length - sizeof(marker)));
+	if(marker != MEIF_END)
+		return NULL;
+
+	meif_message = calloc(1, sizeof(struct meif_message));
+	message_data_length = length - sizeof(struct meif_header) - sizeof(marker);
+	if(message_data_length > 0) {
+		message_data = calloc(1, message_data_length);
+		memcpy(message_data, (void *) ((uint8_t *) data + sizeof(struct meif_header)), message_data_length);
+
+		meif_message->length = message_data_length;
+		meif_message->data = message_data;
+	}
+
+	meif_message->command = meif_header->command;
+
+	return meif_message;
+}
+
+void meif_message_free(struct meif_message *meif_message)
+{
+	if(meif_message == NULL)
+		return;
+
+	if(meif_message->data != NULL)
+		free(meif_message->data);
+
+	memset(meif_message, 0, sizeof(struct meif_message));
+	free(meif_message);
+}
+
+void meif_message_log(struct meif_message *meif_message)
+{
+	char *command = NULL;
+
+	if(meif_message == NULL)
+		return;
+
+	switch(meif_message->command) {
+		case MEIF_ACK_MSG:
+			command = "MEIF_ACK_MSG";
+			break;
+		case MEIF_NACK_MSG:
+			command = "MEIF_NACK_MSG";
+			break;
+		case MEIF_STATE_REPORT_MSG:
+			command = "MEIF_STATE_REPORT_MSG";
+			break;
+		case MEIF_CONFIG_VALUES_MSG:
+			command = "MEIF_CONFIG_VALUES_MSG";
+			break;
+		default:
+			command = "MEIF_UNKNOWN_MSG";
+			break;
+	}
+
+	printf("MEIF message: %s with %d bytes of data:\n", command, meif_message->length);
+	if(meif_message->data != NULL && meif_message->length > 0)
+		hex_dump(meif_message->data, meif_message->length);
+}
+
 void meif_read_loop(int fd)
 {
 	void *data = NULL;
@@ -51,6 +129,7 @@ void meif_read_loop(int fd)
 	data = malloc(length);
 
 	while(run) {
+		meif_message = NULL;
 		meif_header = NULL;
 		marker = 0;
 
@@ -71,6 +150,8 @@ void meif_read_loop(int fd)
 			meif_data = NULL;
 			meif_data_length = 0;
 		}
+
+		printf("Read %d bytes\n", rc);
 
 		if(meif_data_waiting == NULL) {
 			// Read the start marker
@@ -119,10 +200,9 @@ void meif_read_loop(int fd)
 				// We go with a 6 left offset from the announced end of the message
 				marker = *((uint16_t *) ((void *) meif_data + i));
 				if(marker == MEIF_END) {
-					// TODO: convert to meif_message
-					printf("MEIF message (%d bytes):\n", meif_data_length);
-					hex_dump(meif_data, i + sizeof(marker));
-
+					meif_message = meif_message_from_data((void *) meif_data, i + sizeof(marker));
+					if(meif_message == NULL)
+						printf("Failed to create a MEIF message!\n");
 					break;
 				}
 			}
@@ -152,6 +232,10 @@ void meif_read_loop(int fd)
 			meif_data_waiting_length = 0;
 		}
 
-		// TODO: if there is a meif message, dispatch and free and set to NULL
+		if(meif_message != NULL) {
+			meif_message_log(meif_message);
+			// TODO: dispatch
+			meif_message_free(meif_message);
+		}
 	}
 }
