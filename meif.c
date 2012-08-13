@@ -108,6 +108,31 @@ void meif_message_log(struct meif_message *meif_message)
 		hex_dump(meif_message->data, meif_message->length);
 }
 
+int meif_dispatch(struct meif_message *meif_message)
+{
+	struct meif_config_values *config_values;
+
+	switch(meif_message->command) {
+		case MEIF_ACK_MSG:
+			printf("Got an ACK message\n\n");
+			break;
+		case MEIF_NACK_MSG:
+			printf("Got a NACK message\n\n");
+			break;
+		case MEIF_STATE_REPORT_MSG:
+			printf("Got a STATE_REPORT message\n\n");
+			break;
+		case MEIF_CONFIG_VALUES_MSG:
+			if(meif_message->data != NULL && meif_message->length >= sizeof(struct meif_config_values)) {
+				config_values = (struct meif_config_values *) meif_message->data;
+				printf("Got config values:\n\tvendor: %s\n\tproduct: %s\n\n", config_values->vendor, config_values->product);
+			}
+			break;
+	}
+
+	return 0;
+}
+
 void meif_read_loop(int fd)
 {
 	void *data = NULL;
@@ -234,7 +259,9 @@ void meif_read_loop(int fd)
 
 		if(meif_message != NULL) {
 			meif_message_log(meif_message);
-			// TODO: dispatch
+			rc = meif_dispatch(meif_message);
+			if(rc < 0)
+				run = 0;
 			meif_message_free(meif_message);
 		}
 	}

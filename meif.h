@@ -57,7 +57,7 @@ struct meif_message {
 	void *data;
 } __attribute__((__packed__));
 
-struct meif_config_values_report {
+struct meif_config_values {
 	uint8_t unknown1[36];
 	char vendor[16];
 	char product[16];
