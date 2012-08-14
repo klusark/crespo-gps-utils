@@ -203,28 +203,19 @@ int bcm4751_serial_read(int fd, void *data, int length, struct timeval *timeout)
 	return rc;
 }
 
-int bcm4751_serial_write(int fd, void *data, int length, struct timeval *timeout)
+int bcm4751_serial_write(int fd, void *data, int length)
 {
-	fd_set fds;
-	int rc = -1;
-
-	FD_ZERO(&fds);
-	FD_SET(fd, &fds);
-
-	rc = select(fd + 1, NULL,  &fds, NULL, timeout);
-	if(rc > 0) {
-		rc = write(fd, data, length);
-	}
-
-	return rc;
+	return write(fd, data, length);
 }
 
 int bcm4751_autobaud(int fd)
 {
 	struct timeval timeout;
-	uint8_t autobaud[20] = { 0x80 };
+	uint8_t autobaud[20];
 	int ready = 0;
 	int rc = -1;
+
+	memset(autobaud, 0x80, sizeof(autobaud));
 
 	// TODO: limit the number of attempts
 
@@ -232,7 +223,7 @@ int bcm4751_autobaud(int fd)
 	timeout.tv_usec = 0;
 
 	while(!ready) {
-		bcm4751_serial_write(fd, autobaud, sizeof(autobaud), NULL);
+		bcm4751_serial_write(fd, autobaud, sizeof(autobaud));
 
 		rc = bcm4751_serial_read(fd, NULL, 0, &timeout);
 		if(rc > 0)
