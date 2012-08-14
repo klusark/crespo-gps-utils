@@ -36,11 +36,18 @@
 //#define MEIF_ERROR_MSG	0x0002 or 0x0003
 #define MEIF_STATE_REPORT_MSG	0x0004
 #define MEIF_CONFIG_VALUES_MSG	0x0008
+#define MEIF_SEND_PATCH_MSG	0x0010
 
 /*
  * Data
  */
 
+#define MEIF_PATCH_FILE		"/data/bcm4751.fw"
+#define MEIF_PATCH_LENGTH	2738
+#define MEIF_PATCH_PART1_O	0
+#define MEIF_PATCH_PART1_L	2042
+#define MEIF_PATCH_PART2_O	2044
+#define MEIF_PATCH_PART2_L	(MEIF_PATCH_LENGTH - MEIF_PATCH_PART2_O)
 /*
  * Structures
  */
@@ -63,6 +70,11 @@ struct meif_config_values {
 	char product[16];
 	uint8_t unknown2[2];
 } __attribute__((__packed__));
+
+struct meif_send_queue {
+	struct meif_message **messages;
+	int messages_count;
+};
 
 /*
  * Functions

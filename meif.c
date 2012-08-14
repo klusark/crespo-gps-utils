@@ -30,6 +30,44 @@
 
 #include "meif.h"
 
+/*
+ * Utils
+ */
+
+uint16_t meif_message_crc16(struct meif_message *meif_message, void *data, int length)
+{
+	void *crc_data = NULL;
+	int crc_data_length = 0;
+	uint16_t message_length = 0;
+	uint16_t crc = 0;
+	uint8_t d = 0;
+	int i;
+
+	if(meif_message == NULL || data == NULL || length <= 0)
+		return 0;
+
+	crc_data_length = sizeof(meif_message->command) + sizeof(meif_message->length) + length;
+	crc_data = calloc(1, crc_data_length);
+
+	memcpy(crc_data, &(meif_message->command), sizeof(meif_message->command));
+	message_length = meif_message->length + sizeof(uint16_t);
+	memcpy((void *) crc_data + sizeof(meif_message->command),  &(message_length), sizeof(message_length));
+	memcpy((void *) crc_data + sizeof(meif_message->command) + sizeof(message_length), data, length);
+
+	for(i=0 ; i < crc_data_length ; i++) {
+		d = *((uint8_t *) crc_data + i);
+		crc += d;
+	}
+
+	free(crc_data);
+
+	return crc;
+}
+
+/*
+ * Message
+ */
+
 struct meif_message *meif_message_from_data(void *data, int length)
 {
 	struct meif_message *meif_message = NULL;
@@ -66,6 +104,49 @@ struct meif_message *meif_message_from_data(void *data, int length)
 	return meif_message;
 }
 
+int meif_message_to_data(struct meif_message *meif_message, void **data_p)
+{
+	struct meif_header meif_header;
+	void *data = NULL;
+	int length = 0;
+	uint16_t marker = 0;
+
+	if(meif_message == NULL)
+		return -1;
+
+	memset((void *) &meif_header, 0, sizeof(meif_header));
+
+	if(meif_message->data == NULL || meif_message->length < 0)
+		meif_message->length = 0;
+
+	meif_header.marker = MEIF_START;
+	meif_header.command = meif_message->command;
+	meif_header.length = meif_message->length + sizeof(marker);
+
+	length = sizeof(struct meif_header) + meif_message->length + sizeof(marker);
+	data = calloc(1, length);
+
+	memcpy(data, (void *) &meif_header, sizeof(meif_header));
+	if(meif_message->length > 0 && meif_message->data != NULL)
+		memcpy(data + sizeof(meif_header), meif_message->data, meif_message->length);
+	marker = MEIF_END;
+	memcpy(data + sizeof(meif_header) + meif_message->length, &marker, sizeof(marker));
+
+	*data_p = data;
+	return length;
+}
+
+struct meif_message *meif_message_create(uint16_t command, void *data, uint16_t length)
+{
+	struct meif_message *meif_message = calloc(1, sizeof(struct meif_message));
+
+	meif_message->command = command;
+	meif_message->data = data;
+	meif_message->length = length;
+
+	return meif_message;
+}
+
 void meif_message_free(struct meif_message *meif_message)
 {
 	if(meif_message == NULL)
@@ -98,6 +179,9 @@ void meif_message_log(struct meif_message *meif_message)
 		case MEIF_CONFIG_VALUES_MSG:
 			command = "MEIF_CONFIG_VALUES_MSG";
 			break;
+		case  MEIF_SEND_PATCH_MSG:
+			command = "MEIF_SEND_PATCH_MSG";
+			break;
 		default:
 			command = "MEIF_UNKNOWN_MSG";
 			break;
@@ -108,13 +192,259 @@ void meif_message_log(struct meif_message *meif_message)
 		hex_dump(meif_message->data, meif_message->length);
 }
 
+int meif_message_send(struct meif_message *meif_message, int fd)
+{
+	void *data = NULL;
+	int length = 0;
+	int chunk = 160;
+	int written = 0;
+	int count = 0;
+	int rc;
+	int i;
+
+	if(meif_message == NULL)
+		return -1;
+
+	length = meif_message_to_data(meif_message, &data);
+	if(length < 0 || data == NULL) {
+		return -1;
+	}
+
+	printf("Sending %d bytes!\n", length);
+	meif_message_log(meif_message);
+	printf("\n");
+
+	while(written < length) {
+		count = length - written < chunk ? length - written : chunk;
+		rc = bcm4751_serial_write(fd, data + written, count);
+		if(rc <= 0) {
+			printf("Write failed, written %d/%d\n", written, length);
+			free(data);
+			return -1;
+		}
+
+		written += rc;
+	}
+
+	free(data);
+
+	return 0;
+}
+
+/*
+ * Send queue
+ */
+
+struct meif_send_queue meif_send_queue;
+
+int meif_send_queued(struct meif_message *meif_message)
+{
+	struct meif_message **messages;
+	int messages_count = 0;
+	int index = 0;
+	int count = 0;
+
+	if(meif_message == NULL)
+		return -1;
+
+	// Save the previous data pointer and count
+	messages = meif_send_queue.messages;
+	messages_count = meif_send_queue.messages_count;
+
+	if(messages_count < 0)
+		messages_count = 0;
+
+	// Index is the sync request index in the sync requests array
+	index = messages_count;
+	// Count is the total count of sync requests in the array
+	count = index + 1;
+
+	// Alloc the array with the new size
+	meif_send_queue.messages = malloc(sizeof(struct meif_message *) * count);
+	meif_send_queue.messages_count = count;
+
+	// Copy and free previous data
+	if(messages != NULL && messages_count > 0) {
+		memcpy(meif_send_queue.messages, messages, sizeof(struct meif_message *) * messages_count);
+		free(messages);
+	}
+
+	// Get the new data pointer and count
+	messages = meif_send_queue.messages;
+	messages_count = meif_send_queue.messages_count;
+
+	// Put the sync request in the queue
+	messages[index] = meif_message;
+
+	return 0;
+}
+
+struct meif_message *meif_send_dequeue(void)
+{
+	struct meif_message *message;
+	struct meif_message **messages;
+	int messages_count = 0;
+	int pos;
+	int i;
+
+	// Save the previous data pointer and count
+	messages = meif_send_queue.messages;
+	messages_count = meif_send_queue.messages_count;
+
+	if(messages_count <= 0 || messages == NULL) {
+		return NULL;
+	}
+
+	for(i=0 ; i < messages_count ; i++) {
+		if(messages[i] != NULL) {
+			message = messages[i];
+			pos = i;
+			break;
+		}
+	}
+
+	if(message == NULL || pos < 0) {
+		printf("Found no valid request, aborting!\n");
+		return NULL;
+	}
+
+	// Empty the found position in the requests array
+	messages[pos] = NULL;
+
+	// Move the elements back
+	for(i=pos ; i < messages_count-1 ; i++) {
+		messages[i] = messages[i+1];
+	}
+
+	// Empty the latest element
+	if(pos != messages_count-1) {
+		messages[messages_count-1] = NULL;
+	}
+
+	messages_count--;
+
+	if(messages_count == 0) {
+		free(messages);
+		meif_send_queue.messages = NULL;
+	}
+
+	 meif_send_queue.messages_count = messages_count;
+
+	return message;
+}
+
+/*
+ * Requests
+ */
+
+int meif_send_patch(int stage)
+{
+	struct meif_message *meif_message = NULL;
+	void *data = NULL;
+	int length = 0;
+	void *fw_data = NULL;
+	int fw_length = MEIF_PATCH_LENGTH;
+	int fw_fd = -1;
+	uint16_t marker = 0;
+	int rc = -1;
+
+	fw_fd = open(MEIF_PATCH_FILE, O_RDONLY);
+	if(fw_fd < 0) {
+		printf("Unable to open the bcm4751 patch!\n");
+		return -1;
+	}
+
+	fw_data = calloc(1, fw_length);
+
+	rc = read(fw_fd, fw_data, fw_length);
+	if(rc < fw_length) {
+		printf("Unable to read the bcm4751 patch contents (%d/%d)!\n", rc, fw_length);
+		free(data);
+		return -1;
+	}
+
+	close(fw_fd);
+
+	if(stage == 1) {
+		printf("Sending the first part of the patch...\n");
+
+		length = sizeof(marker) + MEIF_PATCH_PART1_L + sizeof(marker);
+		data = calloc(1, length);
+
+		meif_message = meif_message_create(MEIF_SEND_PATCH_MSG, data, length);
+
+		// Part #1
+		marker = 1;
+		memcpy(data, &marker, sizeof(marker));
+
+		// Fw data
+		memcpy((void *) data + sizeof(marker), (void *) fw_data + MEIF_PATCH_PART1_O, MEIF_PATCH_PART1_L);
+
+		// Checksum (without the last 2 bytes that are the checksum)
+		marker = meif_message_crc16(meif_message, data, length - sizeof(marker));
+		memcpy((void *) data + sizeof(marker) + MEIF_PATCH_PART1_L, &marker, sizeof(marker));
+	} else if(stage == 2) {
+		printf("Sending the second part of the patch...\n");
+
+		length = sizeof(marker) + MEIF_PATCH_PART2_L + sizeof(marker);
+		data = calloc(1, length);
+
+		meif_message = meif_message_create(MEIF_SEND_PATCH_MSG, data, length);
+
+		// Part #2
+		marker = 2;
+		memcpy(data, &marker, sizeof(marker));
+
+		// Fw data
+		memcpy((void *) data + sizeof(marker), (void *) fw_data + MEIF_PATCH_PART2_O, MEIF_PATCH_PART2_L);
+
+		// Checksum (without the last 2 bytes that are the checksum)
+		marker = meif_message_crc16(meif_message, data, length - sizeof(marker));
+		memcpy((void *) data + sizeof(marker) + MEIF_PATCH_PART2_L, &marker, sizeof(marker));
+	}
+
+	free(fw_data);
+
+	// data is freed with meif_message_free
+	if(meif_message == NULL) {
+		printf("Unable to create the MEIF message!\n");
+
+		if(data != NULL)
+			free(data);
+
+		return -1;
+	}
+
+	rc = meif_send_queued(meif_message);
+	if(rc < 0) {
+		meif_message_free(meif_message);
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
+ * Dispatch
+ */
+
 int meif_dispatch(struct meif_message *meif_message)
 {
 	struct meif_config_values *config_values;
+	static int patch_send_stage = 0;
 
 	switch(meif_message->command) {
 		case MEIF_ACK_MSG:
 			printf("Got an ACK message\n\n");
+
+			if(patch_send_stage == 1) {
+				patch_send_stage = 2;
+				meif_send_patch(patch_send_stage);
+			} else if(patch_send_stage == 2) {
+				printf("Ready to switch protocol!\n");
+
+				return -1;
+			}
 			break;
 		case MEIF_NACK_MSG:
 			printf("Got a NACK message\n\n");
@@ -127,6 +457,9 @@ int meif_dispatch(struct meif_message *meif_message)
 				config_values = (struct meif_config_values *) meif_message->data;
 				printf("Got config values:\n\tvendor: %s\n\tproduct: %s\n\n", config_values->vendor, config_values->product);
 			}
+
+			patch_send_stage = 1;
+			meif_send_patch(patch_send_stage);
 			break;
 	}
 
@@ -153,10 +486,22 @@ void meif_read_loop(int fd)
 
 	data = malloc(length);
 
+	// Init send queue
+	memset(&meif_send_queue, 0, sizeof(meif_send_queue));
+
 	while(run) {
 		meif_message = NULL;
 		meif_header = NULL;
 		marker = 0;
+
+		if(meif_data == NULL && meif_data_waiting == NULL) {
+			meif_message = meif_send_dequeue();
+			if(meif_message != NULL) {
+				meif_message_send(meif_message, fd);
+				meif_message_free(meif_message);
+				meif_message = NULL;
+			}
+		}
 
 		if(meif_data == NULL) {
 			rc = bcm4751_serial_read(fd, data, length, NULL);
