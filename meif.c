@@ -30,6 +30,8 @@
 
 #include "meif.h"
 
+#define RC_SWITCH_PROTOCOL	-4
+
 /*
  * Utils
  */
@@ -445,7 +447,7 @@ int meif_dispatch(struct meif_message *meif_message)
 				patch_send_stage = 3;
 				printf("Ready to switch protocol!\n");
 
-				return -1;
+				return RC_SWITCH_PROTOCOL;
 			}
 			break;
 		case MEIF_NACK_MSG:
@@ -633,5 +635,11 @@ void meif_read_loop(int fd)
 				run = 0;
 			meif_message_free(meif_message);
 		}
+	}
+
+	switch(rc) {
+		case RC_SWITCH_PROTOCOL:
+			bcm4751_switch_protocol(fd);
+			break;
 	}
 }
