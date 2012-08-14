@@ -431,6 +431,7 @@ int meif_send_patch(int stage)
 int meif_dispatch(struct meif_message *meif_message)
 {
 	struct meif_config_values *config_values;
+	struct meif_nack *nack;
 	static int patch_send_stage = 0;
 
 	switch(meif_message->command) {
@@ -441,13 +442,36 @@ int meif_dispatch(struct meif_message *meif_message)
 				patch_send_stage = 2;
 				meif_send_patch(patch_send_stage);
 			} else if(patch_send_stage == 2) {
+				patch_send_stage = 3;
 				printf("Ready to switch protocol!\n");
 
 				return -1;
 			}
 			break;
 		case MEIF_NACK_MSG:
-			printf("Got a NACK message\n\n");
+			printf("Got a NACK message\n");
+
+			if(meif_message->data != NULL && meif_message->length >= sizeof(struct meif_nack)) {
+				nack = (struct meif_nack *) meif_message->data;
+				switch(nack->reason) {
+					case MEIF_NACK_GARBAGE_RECEIVED:
+						printf("Reason is: MEIF_NACK_GARBAGE_RECEIVED\n");
+						break;
+					case MEIF_NACK_CHECKSUM_ERROR:
+						printf("Reason is: MEIF_NACK_CHECKSUM_ERROR\n");
+						if(patch_send_stage > 0) {
+							patch_send_stage = 0;
+							printf("Patch send request failed, aborting!\n");
+						}
+						break;
+					default:
+						printf("Reason is: MEIF_NACK_UNKNOWN\n");
+						break;
+				}
+			}
+
+			printf("\n");
+
 			break;
 		case MEIF_STATE_REPORT_MSG:
 			printf("Got a STATE_REPORT message\n\n");
