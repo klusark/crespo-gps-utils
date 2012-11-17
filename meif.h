@@ -45,13 +45,6 @@
 #define MEIF_NACK_GARBAGE_RECEIVED	0x0003
 #define MEIF_NACK_CHECKSUM_ERROR	0x0102
 
-#define MEIF_PATCH_FILE		"/data/bcm4751.fw"
-#define MEIF_PATCH_LENGTH	2738
-#define MEIF_PATCH_PART1_O	0
-#define MEIF_PATCH_PART1_L	2042
-#define MEIF_PATCH_PART2_O	2044
-#define MEIF_PATCH_PART2_L	(MEIF_PATCH_LENGTH - MEIF_PATCH_PART2_O)
-
 /*
  * Structures
  */
@@ -85,6 +78,19 @@ struct meif_config_values {
 struct meif_send_queue {
 	struct meif_message **messages;
 	int messages_count;
+};
+
+struct meif_patch_part_info {
+	int offset;
+	int length;
+};
+
+struct meif_patch_info {
+	char *product;
+	char *patch_file;
+	int patch_fd;
+	int parts_count;
+	struct meif_patch_part_info parts[];
 };
 
 /*
