@@ -203,9 +203,20 @@ int bcm4751_serial_read(int fd, void *data, int length, struct timeval *timeout)
 	return rc;
 }
 
-int bcm4751_serial_write(int fd, void *data, int length)
+int bcm4751_serial_write(int fd, void *data, int length, struct timeval *timeout)
 {
-	return write(fd, data, length);
+	fd_set fds;
+	int rc = -1;
+
+	FD_ZERO(&fds);
+	FD_SET(fd, &fds);
+
+	rc = select(fd + 1, NULL, &fds, NULL, timeout);
+	if(rc > 0 && length > 0) {
+		rc = write(fd, data, length);
+	}
+
+	return rc;
 }
 
 int bcm4751_autobaud(int fd)
@@ -223,7 +234,7 @@ int bcm4751_autobaud(int fd)
 	timeout.tv_usec = 0;
 
 	while(!ready) {
-		bcm4751_serial_write(fd, autobaud, sizeof(autobaud));
+		bcm4751_serial_write(fd, autobaud, sizeof(autobaud), NULL);
 
 		rc = bcm4751_serial_read(fd, NULL, 0, &timeout);
 		if(rc > 0)
@@ -262,9 +273,9 @@ void bcm4751_switch_protocol(int fd)
 	sleep(1);
 
 	printf("Sending unknown bytes!\n");
-	bcm4751_serial_write(fd, data1, sizeof(data1));
-	bcm4751_serial_write(fd, data2, sizeof(data2));
-	bcm4751_serial_write(fd, data3, sizeof(data3));
+	bcm4751_serial_write(fd, data1, sizeof(data1), NULL);
+	bcm4751_serial_write(fd, data2, sizeof(data2), NULL);
+	bcm4751_serial_write(fd, data3, sizeof(data3), NULL);
 
 	bcm4751_read_dump(fd);
 }

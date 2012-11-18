@@ -316,7 +316,7 @@ int meif_message_send(struct meif_message *meif_message, int fd)
 
 	while(written < length) {
 		count = length - written < chunk ? length - written : chunk;
-		rc = bcm4751_serial_write(fd, data + written, count);
+		rc = bcm4751_serial_write(fd, data + written, count, NULL);
 		if(rc <= 0) {
 			printf("Write failed, written %d/%d\n", written, length);
 			free(data);
